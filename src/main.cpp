@@ -1,17 +1,18 @@
 #include <Adafruit_NeoPixel.h>
 #include <ESP32Servo.h> // Include the ESP32Servo library
-#include <queue> // Include the queue library for command buffering
-#include <WiFi.h> // Include WiFi library for access point
+#include <queue>        // Include the queue library for command buffering
+#include <WiFi.h>       // Include WiFi library for access point
 #include <ESPAsyncWebServer.h> // Include ESPAsyncWebServer library
+#include <SPIFFS.h>     // Include SPIFFS for file storage
 
 #define PIN_NEOPIXEL 39  // Define the pin where the NeoPixel is connected
 #define NUM_PIXELS 1     // Number of NeoPixels
 #define SERVO_PIN 35     // Change the servo pin to pin 35
 #define CPX 18           // Define CPX as pin 18
 #define CWX 17           // Define CWX as pin 17
-#define CPY 9           // Define CPY as pin 16
-#define CWY 8          // Define CWY as pin 15
-#define VERSION "0.1" // Define the current version of the program
+#define CPY 9            // Define CPY as pin 16
+#define CWY 8            // Define CWY as pin 15
+#define VERSION "0.3"    // Define the current version of the program
 
 Adafruit_NeoPixel strip(NUM_PIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800);
 Servo servo; // Create a Servo object
@@ -21,6 +22,13 @@ std::queue<String> commandQueue; // Queue to store commands
 int X_FEEDRATE = 1000; // Feedrate for X-axis
 int Z_FEEDRATE = 1000; // Feedrate for Z-axis
 
+// Global variables to hold X and Z values from the web page
+int globalXValue = -1000;
+int globalZValue = 0;
+
+// Global variable to hold the command buffer
+String globalCommandBuffer = "";
+
 #define OFF 0x000000
 #define RED 0xFF0000
 #define GREEN 0x00FF00
@@ -29,7 +37,7 @@ int Z_FEEDRATE = 1000; // Feedrate for Z-axis
 #define MAGENTA 0xFF00FF
 
 #define WIFI_SSID "ESP32-S2-Control" // Define the WiFi SSID
-#define WIFI_PASSWORD "" // Open network (no password)
+#define WIFI_PASSWORD ""             // Open network (no password)
 
 AsyncWebServer server(80); // Create an AsyncWebServer object on port 80
 
@@ -45,43 +53,6 @@ void led_off() {
 
 void setReadyState() {
   led_on(GREEN); // Turn LED to GREEN to indicate ready state
-}
-
-bool isBlinking = false; // Flag to indicate if blinking is active
-unsigned long blinkStartTime = 0; // Start time for blinking
-unsigned long lastBlinkTime = 0; // Last time the LED toggled
-int blinkCount = 0; // Counter for the number of blinks
-const unsigned long blinkInterval = 200; // Blink interval in milliseconds
-const int maxBlinks = 6; // Total number of blinks (3 ON/OFF cycles)
-
-void startExecutingState() {
-  isBlinking = true; // Start blinking
-  blinkStartTime = millis(); // Record the start time
-  lastBlinkTime = millis(); // Initialize the last blink time
-  blinkCount = 0; // Reset the blink counter
-}
-
-void updateExecutingState() {
-  if (isBlinking) {
-    unsigned long currentMillis = millis();
-    if (currentMillis - lastBlinkTime >= blinkInterval) {
-      lastBlinkTime = currentMillis; // Update the last blink time
-      blinkCount++; // Increment the blink counter
-
-      // Toggle the LED state
-      if (blinkCount % 2 == 1) {
-        led_on(RED); // Turn LED ON
-      } else {
-        led_off(); // Turn LED OFF
-      }
-
-      // Stop blinking after the maximum number of blinks
-      if (blinkCount >= maxBlinks) {
-        isBlinking = false; // Stop blinking
-        led_off(); // Ensure the LED is OFF
-      }
-    }
-  }
 }
 
 void moveStepper(int steps, int pulsePin, int directionPin, int feedrate) {
@@ -105,9 +76,6 @@ void processCommand(String command) {
 
   // Set LED and webpage background to RED while processing
   led_on(RED);
-  server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(200, "text/plain", "PROCESSING");
-  });
 
   switch (axis) {
     case 'S': // Servo control
@@ -174,44 +142,35 @@ void processCommand(String command) {
 
   // Set LED and webpage background to GREEN after processing
   led_on(GREEN);
-  server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(200, "text/plain", "READY");
-  });
+  
 }
 
 void processBuffer(String buffer) {
-  static int stepCounter = 0; // Counter to track the step in the program
-  stepCounter = 0; // Reset step counter for each new program
+  globalCommandBuffer = buffer; // Update the global command buffer
+  static int stepCounter = 0;   // Counter to track the step in the program
+  stepCounter = 0;              // Reset step counter for each new program
 
   int start = 0;
   while (start < buffer.length()) {
     int end = buffer.indexOf(',', start); // Find the next comma
-    if (end == -1) { // If no more commas, process the last command
+    if (end == -1) {                      // If no more commas, process the last command
       end = buffer.length();
     }
     String command = buffer.substring(start, end); // Extract the command
-    command.trim(); // Remove any extra whitespace
-    commandQueue.push(command); // Add the command to the queue
-    start = end + 1; // Move to the next command
+    command.trim();                                // Trim whitespace
+    commandQueue.push(command);                   // Add the command to the queue
+    start = end + 1;                               // Move to the next command
   }
 }
 
 void processNextCommand() {
-  static int stepCounter = 0; // Counter to track the step in the program
 
   if (!commandQueue.empty()) {
-    startExecutingState(); // Start blinking to indicate execution
     String command = commandQueue.front(); // Get the next command
     commandQueue.pop(); // Remove the command from the queue
     processCommand(command); // Process the command
-  } else if (!isBlinking) { // Ensure blinking has stopped before finishing
-    Serial.println("PROGRAM FINISHED"); // Print program finished message
-    stepCounter = 0; // Reset step counter when all commands are processed
-led_on(GREEN); // Indicate ready state after program finishes
-    // Notify the webpage to change color to green
-    server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
-      request->send(200, "text/plain", "PROGRAM FINISHED");
-    });
+    led_on(GREEN); // Indicate ready state after program finishes
+    Serial.println("COMMAND SENT"); // Print command sent message
   }
 }
 
@@ -236,21 +195,78 @@ void loop() {
   if (!commandBuffer.isEmpty() && commandBuffer.indexOf(',') == -1) {
     commandBuffer.trim(); // Remove any extra whitespace
     commandQueue.push(commandBuffer); // Add the last command to the queue
-    commandBuffer = ""; // Clear the buffer
   }
 
-  // Update the blinking state
-  updateExecutingState();
-
   // Execute the next command in the queue if available
-  if (!commandQueue.empty() && !isBlinking) { // Only process commands when not blinking
+  if (!commandQueue.empty()) {
     processNextCommand();
   }
 
-  // Indicate the system is ready if no commands are in the queue and not blinking
-  if (commandQueue.empty() && !isBlinking) {
+  // Indicate the system is ready if no commands are in the queue
+  if (commandQueue.empty()) {
     setReadyState();
   }
+}
+
+void deleteConfigFile() {
+  if (SPIFFS.exists("/config.txt")) {
+    if (SPIFFS.remove("/config.txt")) {
+      Serial.println("Config file deleted successfully.");
+    } else {
+      Serial.println("Failed to delete config file.");
+    }
+  } else {
+    Serial.println("Config file does not exist.");
+  }
+}
+
+void saveValues(AsyncWebServerRequest *request) {
+  File file = SPIFFS.open("/config.txt", FILE_WRITE);
+  if (!file) {
+    Serial.println("Failed to open config file for writing.");
+    return;
+  }
+  file.printf("XSpeed:%d\n", X_FEEDRATE);
+  file.printf("ZSpeed:%d\n", Z_FEEDRATE);
+
+  // Save the global command buffer
+  file.printf("CommandBuffer:%s\n", globalCommandBuffer.c_str());
+  Serial.printf("CommandBuffer:%s\n", globalCommandBuffer.c_str());
+
+  file.close();
+  Serial.println("Values saved to config file.");
+}
+
+void loadValues() {
+  File file = SPIFFS.open("/config.txt", FILE_READ);
+  if (!file) {
+    Serial.println("Config file not found. Continuing with default values.");
+    return; // Continue with default values if the file does not exist
+  }
+
+  while (file.available()) {
+    String line = file.readStringUntil('\n');
+    if (line.startsWith("XSpeed:")) {
+      X_FEEDRATE = line.substring(7).toInt();
+    } else if (line.startsWith("ZSpeed:")) {
+      Z_FEEDRATE = line.substring(7).toInt();
+    } else if (line.startsWith("CommandBuffer:")) {
+      globalCommandBuffer = line.substring(14); // Load the command buffer into the global variable
+      globalCommandBuffer.trim(); // Remove any extra whitespace
+    }
+  }
+  file.close();
+
+  // Send the loaded values to the web page
+  server.on("/loadValues", HTTP_GET, [](AsyncWebServerRequest *request) {
+    String json = "{\"XSpeed\":" + String(X_FEEDRATE) + 
+                  ",\"ZSpeed\":" + String(Z_FEEDRATE) + 
+                  ",\"Buffer\":\"" + globalCommandBuffer + "\"}";
+    request->send(200, "application/json", json);
+  });
+
+  Serial.println("Values loaded from config file.");
+  Serial.printf("Loaded CommandBuffer: %s\n", globalCommandBuffer.c_str());
 }
 
 void setupWiFi() {
@@ -262,7 +278,7 @@ void setupWiFi() {
 void setupWebServer() {
   // Serve the HTML page
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(200, "text/html", R"rawliteral(
+    String html = R"rawliteral(
       <!DOCTYPE html>
       <html>
       <head>
@@ -270,10 +286,12 @@ void setupWebServer() {
         <style>
           body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
           input, textarea { padding: 10px; width: 300px; }
-          button { padding: 10px 20px; margin-left: 10px; }
+          .large-button { padding: 15px 30px; font-size: 18px; margin: 10px; }
+          .small-button { padding: 10px 20px; margin: 5px; }
+          .button-container { margin-top: 20px; }
         </style>
         <script>
-          let isRunning = false;
+          // Removed unused variable `let isRunning = false;`
 
           function sendCommandBuffer() {
             const commandBuffer = document.getElementById('commandBuffer').value.trim();
@@ -281,34 +299,70 @@ void setupWebServer() {
               document.getElementById('response').innerText = 'Error: Command buffer cannot be empty.';
               return;
             }
-            isRunning = true;
             updateBackgroundColor('red'); // Indicate program is running
             fetch(`/commandBuffer?buffer=${encodeURIComponent(commandBuffer)}`)
               .then(response => response.text())
               .then(data => {
                 document.getElementById('response').innerText = data;
-                checkStatus(); // Check status after sending buffer
+                // Removed the undefined checkStatus function call
               })
               .catch(err => {
                 document.getElementById('response').innerText = 'Error sending command buffer';
-                isRunning = false;
                 updateBackgroundColor('red'); // Indicate error
               });
           }
 
-          function sendSingleCommand(axis) {
-            const value = document.getElementById(`${axis}Value`).value.trim();
+          function setSpeed(axis) {
+            const value = document.getElementById(`${axis}Speed`).value.trim();
             if (!value || isNaN(value)) {
-              document.getElementById('response').innerText = `Error: Enter a valid number for ${axis}-axis.`;
+              document.getElementById('response').innerText = `Error: Enter a valid speed for ${axis}-axis.`;
               return;
             }
-            fetch(`/command?cmd=${axis}${value}`)
+            const command = axis === 'X' ? `F${value}` : `G${value}`;
+            fetch(`/command?cmd=${command}`)
               .then(response => response.text())
               .then(data => {
                 document.getElementById('response').innerText = data;
               })
               .catch(err => {
-                document.getElementById('response').innerText = `Error sending ${axis}-axis command.`;
+                document.getElementById('response').innerText = `Error setting speed for ${axis}-axis.`;
+              });
+          }
+
+          function saveValues() {
+            fetch(`/saveValues`)
+              .then(response => response.text())
+              .then(data => {
+                document.getElementById('response').innerText = data;
+              })
+              .catch(err => {
+                document.getElementById('response').innerText = 'Error saving values.';
+              });
+          }
+
+          function loadValues() {
+            fetch(`/loadValues`)
+              .then(response => response.text())
+              .then(data => {
+                const values = JSON.parse(data);
+                document.getElementById('XSpeed').value = values.XSpeed;
+                document.getElementById('ZSpeed').value = values.ZSpeed;
+                document.getElementById('commandBuffer').value = values.Buffer;
+                document.getElementById('response').innerText = 'Values loaded successfully.';
+              })
+              .catch(err => {
+                document.getElementById('response').innerText = 'Error loading values.';
+              });
+          }
+
+          function deleteConfig() {
+            fetch(`/deleteConfig`)
+              .then(response => response.text())
+              .then(data => {
+                document.getElementById('response').innerText = data;
+              })
+              .catch(err => {
+                document.getElementById('response').innerText = 'Error deleting config file.';
               });
           }
 
@@ -316,11 +370,18 @@ void setupWebServer() {
             document.body.style.backgroundColor = color;
           }
 
-          setInterval(() => {
-            if (isRunning) {
-              checkStatus(); // Periodically check status
-            }
-          }, 500);
+          function loadWire() {
+            fetch(`/loadWire`)
+              .then(response => response.text())
+              .then(data => {
+                document.getElementById('response').innerText = data;
+              })
+              .catch(err => {
+                document.getElementById('response').innerText = 'Error executing LOAD WIRE command.';
+              });
+          }
+
+          
         </script>
       </head>
       <body>
@@ -328,19 +389,26 @@ void setupWebServer() {
         <div>
           <textarea id="commandBuffer" rows="4" cols="50" placeholder="Enter command buffer (e.g., S90,Z100,D500)"></textarea>
           <br>
-          <button onclick="sendCommandBuffer()">Send Buffer</button>
+          <div class="button-container">
+            <button class="large-button" onclick="sendCommandBuffer()">Send Buffer</button>
+            <button class="large-button" onclick="loadWire()">LOAD WIRE</button>
+          </div>
+          <div class="button-container">
+            <button class="small-button" onclick="saveValues()">Save Values</button>
+            <button class="small-button" onclick="loadValues()">Load Values</button>
+            <button class="small-button" onclick="deleteConfig()">Delete Config File</button>
+            <button class="small-button" onclick="window.location.href='/viewConfig'">View Config File</button>
+          </div>
         </div>
         <div style="margin-top: 20px;">
-          <label for="XValue">X-axis Value:</label>
-          <input type="number" id="XValue" placeholder="Enter steps for X">
-          <button onclick="sendSingleCommand('X')">Move X</button>
+          <label for="XSpeed">X-axis Speed:</label>
+          <input type="number" id="XSpeed" placeholder="Enter speed for X">
+          <button class="small-button" onclick="setSpeed('X')">Set X Speed</button>
           <br><br>
-          <label for="ZValue">Z-axis Value:</label>
-          <input type="number" id="ZValue" placeholder="Enter steps for Z">
-          <button onclick="sendSingleCommand('Z')">Move Z</button>
+          <label for="ZSpeed">Z-axis Speed:</label>
+          <input type="number" id="ZSpeed" placeholder="Enter speed for Z">
+          <button class="small-button" onclick="setSpeed('Z')">Set Z Speed</button>
         </div>
-        <p id="response"></p>
-        <hr>
         <h2>Supported Commands</h2>
         <ul>
           <li><strong>S:</strong> Servo control (e.g., S90 for 90 degrees)</li>
@@ -349,17 +417,20 @@ void setupWebServer() {
           <li><strong>X:</strong> X-axis stepper motor control (e.g., X100 for 100 steps)</li>
           <li><strong>F:</strong> Change feedrate (speed) for X-axis (e.g., F1500 for 1500 steps/second)</li>
           <li><strong>G:</strong> Change feedrate (speed) for Z-axis (e.g., G1200 for 1200 steps/second)</li>
+          <li><strong>LOAD WIRE:</strong> Moves X-axis by the predefined globalXValue.</li>
         </ul>
+        <div id="response" style="margin-top: 20px; color: blue;"></div>
       </body>
       </html>
-    )rawliteral");
+    )rawliteral";
+    request->send(200, "text/html", html);
   });
 
   // Handle command buffer input
   server.on("/commandBuffer", HTTP_GET, [](AsyncWebServerRequest *request) {
     if (request->hasParam("buffer")) {
       String buffer = request->getParam("buffer")->value();
-      processBuffer(buffer); // Process the buffer of commands
+      processBuffer(buffer); // Update the global command buffer and process it
       request->send(200, "text/plain", "Command buffer received: " + buffer);
     } else {
       request->send(400, "text/plain", "Missing 'buffer' parameter");
@@ -377,15 +448,63 @@ void setupWebServer() {
     }
   });
 
-  // Handle moveX input
-  server.on("/moveX", HTTP_GET, [](AsyncWebServerRequest *request) {
-    if (request->hasParam("amount")) {
-      String amount = request->getParam("amount")->value();
-      int moveAmount = amount.toInt();
-      moveStepper(moveAmount, CPX, CWX, X_FEEDRATE); // Move X-axis stepper motor
-      request->send(200, "text/plain", "Moved X by " + String(moveAmount));
+  server.on("/saveValues", HTTP_GET, [](AsyncWebServerRequest *request) {
+      saveValues(request);
+    request->send(200, "text/plain", "Values saved successfully.");
+  });
+
+  server.on("/loadValues", HTTP_GET, [](AsyncWebServerRequest *request) {
+    loadValues();
+    String bufferContents = "";
+    std::queue<String> tempQueue = commandQueue; // Copy the queue to preserve its state
+    while (!tempQueue.empty()) {
+      bufferContents += tempQueue.front() + ",";
+      tempQueue.pop();
+    }
+    if (!bufferContents.isEmpty()) {
+      bufferContents.remove(bufferContents.length() - 1); // Remove the trailing comma
+    }
+    String json = "{\"XSpeed\":" + String(X_FEEDRATE) + 
+                  ",\"ZSpeed\":" + String(Z_FEEDRATE) + 
+                  ",\"Buffer\":\"" + bufferContents + "\"}";
+    request->send(200, "application/json", json);
+  });
+
+  server.on("/deleteConfig", HTTP_GET, [](AsyncWebServerRequest *request) {
+    deleteConfigFile();
+    request->send(200, "text/plain", "Config file deleted.");
+  });
+
+  // Serve the config file contents
+  server.on("/viewConfig", HTTP_GET, [](AsyncWebServerRequest *request) {
+    if (SPIFFS.exists("/config.txt")) {
+      File file = SPIFFS.open("/config.txt", FILE_READ);
+      if (file) {
+        String content = "";
+        while (file.available()) {
+          content += char(file.read()); // Read the entire file content
+        }
+        file.close();
+        String html = "<!DOCTYPE html><html><head><title>Config File</title></head><body>";
+        html += "<h1>Config File Contents</h1><pre>" + content + "</pre>";
+        html += "<a href='/'>Back to Home</a></body></html>";
+        request->send(200, "text/html", html);
+      } else {
+        request->send(500, "text/plain", "Failed to open config file.");
+      }
     } else {
-      request->send(400, "text/plain", "Missing amount parameter");
+      request->send(404, "text/plain", "Config file not found.");
+    }
+  });
+
+  // Add a new endpoint to handle the LOAD WIRE command
+  server.on("/loadWire", HTTP_GET, [](AsyncWebServerRequest *request) {
+    if (globalXValue != 0) {
+      String command = "X" + String(globalXValue);
+      commandQueue.push(command); // Add the command to the queue
+      request->send(200, "text/plain", "LOAD WIRE command executed: " + command);
+    } else {
+      request->send(400, "text/plain", "Error: globalXValue is not set.");
     }
   });
 
@@ -420,6 +539,13 @@ void setup() {
   led_on(GREEN); // Turn LED to GREEN to indicate ready state
   Serial.print("READY "); // Output READY message to serial
   Serial.println(VERSION); // Append the version to the READY message
+
+  // Initialize SPIFFS
+  if (!SPIFFS.begin(true)) {
+    Serial.println("An error occurred while mounting SPIFFS. Continuing without file system.");
+  } else {
+    loadValues(); // Attempt to load values from the config file
+  }
 
   setupWiFi(); // Set up the WiFi access point
   setupWebServer(); // Set up the web server
