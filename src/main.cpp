@@ -12,7 +12,7 @@
 #define CWX 17           // Define CWX as pin 17
 #define CPY 9            // Define CPY as pin 16
 #define CWY 8            // Define CWY as pin 15
-#define VERSION "0.3"    // Define the current version of the program
+#define VERSION "0.4"    // Define the current version of the program
 
 Adafruit_NeoPixel strip(NUM_PIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800);
 Servo servo; // Create a Servo object
@@ -134,9 +134,15 @@ void processCommand(String command) {
       }
       break;
 
+    case 'H': // Set globalXValue
+      Serial.printf("[Step %d] H command received with value: %d\n", ++stepCounter, value);
+      globalXValue = value;
+      Serial.printf("globalXValue updated to: %d\n", globalXValue);
+      break;
+
     default:
       Serial.printf("[Step %d] Invalid command received: %s\n", ++stepCounter, command.c_str());
-      Serial.println("Invalid command. Use 'S', 'Z', 'X', 'D', 'F', or 'G' followed by a value.");
+      Serial.println("Invalid command. Use 'S', 'Z', 'X', 'D', 'F', 'G' or 'H' followed by a value.");
       break;
   }
 
@@ -228,7 +234,7 @@ void saveValues(AsyncWebServerRequest *request) {
   }
   file.printf("XSpeed:%d\n", X_FEEDRATE);
   file.printf("ZSpeed:%d\n", Z_FEEDRATE);
-
+  file.printf("globalXValue:%d\n", globalXValue); // Save globalXValue
   // Save the global command buffer
   file.printf("CommandBuffer:%s\n", globalCommandBuffer.c_str());
   Serial.printf("CommandBuffer:%s\n", globalCommandBuffer.c_str());
@@ -250,6 +256,8 @@ void loadValues() {
       X_FEEDRATE = line.substring(7).toInt();
     } else if (line.startsWith("ZSpeed:")) {
       Z_FEEDRATE = line.substring(7).toInt();
+    } else if (line.startsWith("globalXValue:")) {
+      globalXValue = line.substring(13).toInt(); // Load globalXValue
     } else if (line.startsWith("CommandBuffer:")) {
       globalCommandBuffer = line.substring(14); // Load the command buffer into the global variable
       globalCommandBuffer.trim(); // Remove any extra whitespace
@@ -261,11 +269,13 @@ void loadValues() {
   server.on("/loadValues", HTTP_GET, [](AsyncWebServerRequest *request) {
     String json = "{\"XSpeed\":" + String(X_FEEDRATE) + 
                   ",\"ZSpeed\":" + String(Z_FEEDRATE) + 
+                  ",\"globalXValue\":" + String(globalXValue) + 
                   ",\"Buffer\":\"" + globalCommandBuffer + "\"}";
     request->send(200, "application/json", json);
   });
 
   Serial.println("Values loaded from config file.");
+  Serial.printf("Loaded globalXValue: %d\n", globalXValue);
   Serial.printf("Loaded CommandBuffer: %s\n", globalCommandBuffer.c_str());
 }
 
@@ -282,7 +292,7 @@ void setupWebServer() {
       <!DOCTYPE html>
       <html>
       <head>
-        <title>ESP32-S2 Control 1.3</title>
+        <title>ESP32-S2 Control )rawliteral" + String(VERSION) + R"rawliteral(</title>
         <style>
           body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
           input, textarea { padding: 10px; width: 300px; }
@@ -385,7 +395,7 @@ void setupWebServer() {
         </script>
       </head>
       <body>
-        <h1>WIRE BENDER-1.1</h1>
+        <h1>WIRE BENDER - )rawliteral" + String(VERSION) + R"rawliteral(</h1>
         <div>
           <textarea id="commandBuffer" rows="4" cols="50" placeholder="Enter command buffer (e.g., S90,Z100,D500)"></textarea>
           <br>
@@ -417,6 +427,7 @@ void setupWebServer() {
           <li><strong>X:</strong> X-axis stepper motor control (e.g., X100 for 100 steps)</li>
           <li><strong>F:</strong> Change feedrate (speed) for X-axis (e.g., F1500 for 1500 steps/second)</li>
           <li><strong>G:</strong> Change feedrate (speed) for Z-axis (e.g., G1200 for 1200 steps/second)</li>
+          <li><strong>H:</strong> Set globalXValue (e.g., H-1300 to set globalXValue to -1300)</li>
           <li><strong>LOAD WIRE:</strong> Moves X-axis by the predefined globalXValue.</li>
         </ul>
         <div id="response" style="margin-top: 20px; color: blue;"></div>
