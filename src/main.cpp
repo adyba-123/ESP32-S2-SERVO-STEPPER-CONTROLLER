@@ -12,7 +12,7 @@
 #define CWX 17           // Define CWX as pin 17
 #define CPY 9            // Define CPY as pin 16
 #define CWY 8            // Define CWY as pin 15
-#define VERSION "0.4"    // Define the current version of the program
+#define VERSION "0.5"    // Define the current version of the program
 
 Adafruit_NeoPixel strip(NUM_PIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800);
 Servo servo; // Create a Servo object
@@ -24,10 +24,11 @@ int Z_FEEDRATE = 1000; // Feedrate for Z-axis
 
 // Global variables to hold X and Z values from the web page
 int globalXValue = -1000;
-int globalZValue = 0;
 
 // Global variable to hold the command buffer
 String globalCommandBuffer = "";
+
+int globalDelayMs = 50; // Global delay in milliseconds between commands for stability
 
 #define OFF 0x000000
 #define RED 0xFF0000
@@ -140,6 +141,16 @@ void processCommand(String command) {
       Serial.printf("globalXValue updated to: %d\n", globalXValue);
       break;
 
+    case 'C': // Set globalDelayMs
+      Serial.printf("[Step %d] C command received with value: %d\n", ++stepCounter, value);
+      if (value >= 0) {
+        globalDelayMs = value;
+        Serial.printf("globalDelayMs updated to: %d ms\n", globalDelayMs);
+      } else {
+        Serial.println("Invalid delay value. Please enter a non-negative number.");
+      }
+      break;
+
     default:
       Serial.printf("[Step %d] Invalid command received: %s\n", ++stepCounter, command.c_str());
       Serial.println("Invalid command. Use 'S', 'Z', 'X', 'D', 'F', 'G' or 'H' followed by a value.");
@@ -170,13 +181,13 @@ void processBuffer(String buffer) {
 }
 
 void processNextCommand() {
-
   if (!commandQueue.empty()) {
     String command = commandQueue.front(); // Get the next command
     commandQueue.pop(); // Remove the command from the queue
     processCommand(command); // Process the command
+    delay(globalDelayMs); // Add delay for stability
+    Serial.printf("COMMAND SENT with delay: %d ms\n", globalDelayMs); // Print command sent message with delay
     led_on(GREEN); // Indicate ready state after program finishes
-    Serial.println("COMMAND SENT"); // Print command sent message
   }
 }
 
@@ -235,6 +246,7 @@ void saveValues(AsyncWebServerRequest *request) {
   file.printf("XSpeed:%d\n", X_FEEDRATE);
   file.printf("ZSpeed:%d\n", Z_FEEDRATE);
   file.printf("globalXValue:%d\n", globalXValue); // Save globalXValue
+  file.printf("globalDelayMs:%d\n", globalDelayMs); // Save globalDelayMs
   // Save the global command buffer
   file.printf("CommandBuffer:%s\n", globalCommandBuffer.c_str());
   Serial.printf("CommandBuffer:%s\n", globalCommandBuffer.c_str());
@@ -258,6 +270,8 @@ void loadValues() {
       Z_FEEDRATE = line.substring(7).toInt();
     } else if (line.startsWith("globalXValue:")) {
       globalXValue = line.substring(13).toInt(); // Load globalXValue
+    } else if (line.startsWith("globalDelayMs:")) {
+      globalDelayMs = line.substring(14).toInt(); // Load globalDelayMs
     } else if (line.startsWith("CommandBuffer:")) {
       globalCommandBuffer = line.substring(14); // Load the command buffer into the global variable
       globalCommandBuffer.trim(); // Remove any extra whitespace
@@ -270,12 +284,14 @@ void loadValues() {
     String json = "{\"XSpeed\":" + String(X_FEEDRATE) + 
                   ",\"ZSpeed\":" + String(Z_FEEDRATE) + 
                   ",\"globalXValue\":" + String(globalXValue) + 
+                  ",\"globalDelayMs\":" + String(globalDelayMs) + 
                   ",\"Buffer\":\"" + globalCommandBuffer + "\"}";
     request->send(200, "application/json", json);
   });
 
   Serial.println("Values loaded from config file.");
   Serial.printf("Loaded globalXValue: %d\n", globalXValue);
+  Serial.printf("Loaded globalDelayMs: %d ms\n", globalDelayMs);
   Serial.printf("Loaded CommandBuffer: %s\n", globalCommandBuffer.c_str());
 }
 
@@ -428,6 +444,7 @@ void setupWebServer() {
           <li><strong>F:</strong> Change feedrate (speed) for X-axis (e.g., F1500 for 1500 steps/second)</li>
           <li><strong>G:</strong> Change feedrate (speed) for Z-axis (e.g., G1200 for 1200 steps/second)</li>
           <li><strong>H:</strong> Set globalXValue (e.g., H-1300 to set globalXValue to -1300)</li>
+          <li><strong>C:</strong> Set globalDelayMs (e.g., C100 to set delay to 100 ms)</li>
           <li><strong>LOAD WIRE:</strong> Moves X-axis by the predefined globalXValue.</li>
         </ul>
         <div id="response" style="margin-top: 20px; color: blue;"></div>
