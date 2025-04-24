@@ -12,7 +12,7 @@
 #define CWX 17           // Define CWX as pin 17
 #define CPY 9            // Define CPY as pin 16
 #define CWY 8            // Define CWY as pin 15
-#define VERSION "0.5"    // Define the current version of the program
+#define VERSION "0.6"    // Define the current version of the program
 
 Adafruit_NeoPixel strip(NUM_PIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800);
 Servo servo; // Create a Servo object
@@ -29,6 +29,7 @@ int globalXValue = -1000;
 String globalCommandBuffer = "";
 
 int globalDelayMs = 50; // Global delay in milliseconds between commands for stability
+int servoStabilizationDelayMs = 500; // Configurable delay for servo stabilization
 
 #define OFF 0x000000
 #define RED 0xFF0000
@@ -52,8 +53,12 @@ void led_off() {
   strip.show();
 }
 
+void setProcessingState() {
+  led_on(RED); // Set LED to RED to indicate processing state
+}
+
 void setReadyState() {
-  led_on(GREEN); // Turn LED to GREEN to indicate ready state
+  led_on(GREEN); // Set LED to GREEN to indicate ready state
 }
 
 void moveStepper(int steps, int pulsePin, int directionPin, int feedrate) {
@@ -69,35 +74,51 @@ void moveStepper(int steps, int pulsePin, int directionPin, int feedrate) {
   }
 }
 
+void moveServo(int angle) {
+  if (angle >= 0 && angle <= 360) { // Support angles between 0 and 360
+    int mappedAngle = map(angle, 0, 360, 0, 180); // Map 0-360 to 0-180 for ESP32Servo
+    servo.write(mappedAngle); // Move servo to the specified angle
+    delay(servoStabilizationDelayMs); // Use configurable delay
+    Serial.printf("Servo moved to angle: %d\n", angle);
+  } else {
+    Serial.println("Invalid servo angle. Please enter a value between 0 and 360.");
+  }
+}
+
+void moveStepperWithDelay(int steps, int pulsePin, int directionPin, int feedrate, int delayMs) {
+  delay(delayMs); // Delay before starting stepper movement
+  moveStepper(steps, pulsePin, directionPin, feedrate); // Move stepper motor
+  Serial.printf("Stepper moved %d steps with delay of %d ms\n", steps, delayMs);
+}
+
 void processCommand(String command) {
   char axis = command.charAt(0); // Extract the first character (e.g., 'S', 'Z', 'X', 'D', 'F')
   int value = command.substring(1).toInt(); // Extract the numeric value after the axis
 
   static int stepCounter = 0; // Counter to track the step in the program
 
-  // Set LED and webpage background to RED while processing
-  led_on(RED);
+  setProcessingState(); // Indicate processing state
 
   switch (axis) {
+    case '\x03': // CTRL+C (ASCII code 3)
+      Serial.printf("[Step %d] CTRL+C received. Stopping all operations.\n", ++stepCounter);
+      commandQueue = std::queue<String>(); // Clear the command queue
+      setReadyState(); // Indicate ready state
+      break;
+
     case 'S': // Servo control
       Serial.printf("[Step %d] Servo command received with angle: %d\n", ++stepCounter, value);
-      if (value >= 0 && value <= 360) { // Support angles between 0 and 360
-        int mappedAngle = map(value, 0, 360, 0, 180); // Map 0-360 to 0-180 for ESP32Servo
-        servo.write(mappedAngle); // Move servo to the specified angle
-        delay(20); // Add a delay to stabilize the PWM signal
-      } else {
-        Serial.println("Invalid servo angle. Please enter a value between 0 and 360.");
-      }
+      moveServo(value); // Move the servo
       break;
 
     case 'Z': // Z-axis stepper motor control
       Serial.printf("[Step %d] Z-axis command received with value: %d\n", ++stepCounter, value);
-      moveStepper(value, CPY, CWY, Z_FEEDRATE); // Move Z-axis stepper motor
+      moveStepperWithDelay(value, CPY, CWY, Z_FEEDRATE, globalDelayMs); // Move Z-axis stepper motor with delay
       break;
 
     case 'X': // X-axis stepper motor control
       Serial.printf("[Step %d] X-axis command received with value: %d\n", ++stepCounter, value);
-      moveStepper(value, CPX, CWX, X_FEEDRATE); // Move X-axis stepper motor
+      moveStepperWithDelay(value, CPX, CWX, X_FEEDRATE, globalDelayMs); // Move X-axis stepper motor with delay
       break;
 
     case 'D': // Delay in milliseconds
@@ -131,7 +152,7 @@ void processCommand(String command) {
         Z_FEEDRATE = value;
         Serial.printf("Feedrate for Z-axis updated to %d steps per second.\n", value);
       } else {
-        Serial.println("Invalid feedrate value for Z-axis. Please enter a positive number.");
+        Serial.println("Invalid feedrate value. Please enter a positive number.");
       }
       break;
 
@@ -157,9 +178,7 @@ void processCommand(String command) {
       break;
   }
 
-  // Set LED and webpage background to GREEN after processing
-  led_on(GREEN);
-  
+  setReadyState(); // Indicate ready state
 }
 
 void processBuffer(String buffer) {
@@ -212,6 +231,7 @@ void loop() {
   if (!commandBuffer.isEmpty() && commandBuffer.indexOf(',') == -1) {
     commandBuffer.trim(); // Remove any extra whitespace
     commandQueue.push(commandBuffer); // Add the last command to the queue
+    commandBuffer = ""; // Clear the buffer after adding the command
   }
 
   // Execute the next command in the queue if available
@@ -278,16 +298,6 @@ void loadValues() {
     }
   }
   file.close();
-
-  // Send the loaded values to the web page
-  server.on("/loadValues", HTTP_GET, [](AsyncWebServerRequest *request) {
-    String json = "{\"XSpeed\":" + String(X_FEEDRATE) + 
-                  ",\"ZSpeed\":" + String(Z_FEEDRATE) + 
-                  ",\"globalXValue\":" + String(globalXValue) + 
-                  ",\"globalDelayMs\":" + String(globalDelayMs) + 
-                  ",\"Buffer\":\"" + globalCommandBuffer + "\"}";
-    request->send(200, "application/json", json);
-  });
 
   Serial.println("Values loaded from config file.");
   Serial.printf("Loaded globalXValue: %d\n", globalXValue);
@@ -482,19 +492,12 @@ void setupWebServer() {
   });
 
   server.on("/loadValues", HTTP_GET, [](AsyncWebServerRequest *request) {
-    loadValues();
-    String bufferContents = "";
-    std::queue<String> tempQueue = commandQueue; // Copy the queue to preserve its state
-    while (!tempQueue.empty()) {
-      bufferContents += tempQueue.front() + ",";
-      tempQueue.pop();
-    }
-    if (!bufferContents.isEmpty()) {
-      bufferContents.remove(bufferContents.length() - 1); // Remove the trailing comma
-    }
+    loadValues(); // Reload values from the config file
     String json = "{\"XSpeed\":" + String(X_FEEDRATE) + 
                   ",\"ZSpeed\":" + String(Z_FEEDRATE) + 
-                  ",\"Buffer\":\"" + bufferContents + "\"}";
+                  ",\"globalXValue\":" + String(globalXValue) + 
+                  ",\"globalDelayMs\":" + String(globalDelayMs) + 
+                  ",\"Buffer\":\"" + globalCommandBuffer + "\"}";
     request->send(200, "application/json", json);
   });
 
