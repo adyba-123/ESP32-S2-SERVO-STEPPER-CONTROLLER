@@ -12,7 +12,7 @@
 #define CWX 17           // Define CWX as pin 17
 #define CPY 9            // Define CPY as pin 16
 #define CWY 8            // Define CWY as pin 15
-#define VERSION "0.6"    // Define the current version of the program
+#define VERSION "0.7"    // Define the current version of the program
 
 Adafruit_NeoPixel strip(NUM_PIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800);
 Servo servo; // Create a Servo object
@@ -306,9 +306,21 @@ void loadValues() {
 }
 
 void setupWiFi() {
-  WiFi.softAP(WIFI_SSID, WIFI_PASSWORD); // Start the WiFi access point
-  Serial.print("Access Point started. IP address: ");
-  Serial.println(WiFi.softAPIP()); // Print the IP address of the AP
+  // Get the MAC address of the ESP32
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+
+  // Format the AP name as "WIRE-BENDER-<VERSION>-<MAC>"
+  char apName[40];
+  snprintf(apName, sizeof(apName), "WIRE-BENDER-%s-%02X%02X%02X", VERSION, mac[3], mac[4], mac[5]);
+
+  // Start the WiFi access point with the generated name
+  WiFi.softAP(apName, WIFI_PASSWORD);
+
+  Serial.print("Access Point started. AP Name: ");
+  Serial.println(apName);
+  Serial.print("IP address: ");
+  Serial.println(WiFi.softAPIP());
 }
 
 void setupWebServer() {
