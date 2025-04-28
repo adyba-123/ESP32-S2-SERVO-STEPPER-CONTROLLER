@@ -12,7 +12,7 @@
 #define CWX 17           // Define CWX as pin 17
 #define CPY 9            // Define CPY as pin 16
 #define CWY 8            // Define CWY as pin 15
-#define VERSION "0.7"    // Define the current version of the program
+#define VERSION "0.8"    // Define the current version of the program
 
 Adafruit_NeoPixel strip(NUM_PIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800);
 Servo servo; // Create a Servo object
@@ -23,7 +23,7 @@ int X_FEEDRATE = 1000; // Feedrate for X-axis
 int Z_FEEDRATE = 1000; // Feedrate for Z-axis
 
 // Global variables to hold X and Z values from the web page
-int globalXValue = -1000;
+int globalXValue = -2000;
 
 // Global variable to hold the command buffer
 String globalCommandBuffer = "";
@@ -38,7 +38,6 @@ int servoStabilizationDelayMs = 500; // Configurable delay for servo stabilizati
 #define BLUE 0x0000FF
 #define MAGENTA 0xFF00FF
 
-#define WIFI_SSID "ESP32-S2-Control" // Define the WiFi SSID
 #define WIFI_PASSWORD ""             // Open network (no password)
 
 AsyncWebServer server(80); // Create an AsyncWebServer object on port 80
@@ -74,14 +73,18 @@ void moveStepper(int steps, int pulsePin, int directionPin, int feedrate) {
   }
 }
 
+// Define soft limits for the servo
+const int LowAngle = 170; // Minimum allowed angle
+const int HighAngle = 345; // Maximum allowed angle
+
 void moveServo(int angle) {
-  if (angle >= 0 && angle <= 360) { // Support angles between 0 and 360
+  if (angle >= LowAngle && angle <= HighAngle) { // Enforce soft limits
     int mappedAngle = map(angle, 0, 360, 0, 180); // Map 0-360 to 0-180 for ESP32Servo
     servo.write(mappedAngle); // Move servo to the specified angle
     delay(servoStabilizationDelayMs); // Use configurable delay
     Serial.printf("Servo moved to angle: %d\n", angle);
   } else {
-    Serial.println("Invalid servo angle. Please enter a value between 0 and 360.");
+    Serial.printf("Invalid servo angle: %d. Allowed range is %d to %d.\n", angle, LowAngle, HighAngle);
   }
 }
 
@@ -577,7 +580,7 @@ void setup() {
 
   servo.setPeriodHertz(50); // Set the PWM frequency to 50Hz
   servo.attach(SERVO_PIN, 500, 2500); // Attach the servo with min/max pulse widths
-  servo.write(0);                     // Set the servo to its initial position (0 degrees)
+  servo.write(map(LowAngle, 0, 360, 0, 180)); // Set the servo to the minimum allowed angle (LowAngle)
 
   led_on(GREEN); // Turn LED to GREEN to indicate ready state
   Serial.print("READY "); // Output READY message to serial
