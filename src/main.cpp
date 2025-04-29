@@ -12,7 +12,7 @@
 #define CWX 17           // Define CWX as pin 17
 #define CPY 9            // Define CPY as pin 16
 #define CWY 8            // Define CWY as pin 15
-#define VERSION "0.8"    // Define the current version of the program
+#define VERSION "0.9"    // Define the current version of the program
 
 Adafruit_NeoPixel strip(NUM_PIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800);
 Servo servo; // Create a Servo object
@@ -336,10 +336,21 @@ void setupWebServer() {
         <title>ESP32-S2 Control )rawliteral" + String(VERSION) + R"rawliteral(</title>
         <style>
           body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
-          input, textarea { padding: 10px; width: 300px; }
-          .large-button { padding: 15px 30px; font-size: 18px; margin: 10px; }
-          .small-button { padding: 10px 20px; margin: 5px; }
+          input, textarea { padding: 10px; width: 600px; } /* Buffer text box 200% wider */
+          textarea { resize: none; } /* Prevent resizing of the text area */
+          .large-button { 
+            padding: 30px 60px; /* 200% larger */
+            font-size: 24px; 
+            font-weight: bold; /* Bold text */
+            margin: 10px; 
+          }
+          .small-button { 
+            padding: 10px 20px; 
+            font-weight: bold; /* Bold text */
+            margin: 5px; 
+          }
           .button-container { margin-top: 20px; }
+          .example-command, h2 { font-size: 16px; } /* Match size of <label> text */
         </style>
         <script>
           // Removed unused variable `let isRunning = false;`
@@ -432,6 +443,10 @@ void setupWebServer() {
               });
           }
 
+          function navigateToHelp() {
+            window.location.href = '/help';
+          }
+
           
         </script>
       </head>
@@ -449,6 +464,7 @@ void setupWebServer() {
             <button class="small-button" onclick="loadValues()">Load Values</button>
             <button class="small-button" onclick="deleteConfig()">Delete Config File</button>
             <button class="small-button" onclick="window.location.href='/viewConfig'">View Config File</button>
+            <button class="small-button" onclick="navigateToHelp()">HELP</button>
           </div>
         </div>
         <div style="margin-top: 20px;">
@@ -460,7 +476,28 @@ void setupWebServer() {
           <input type="number" id="ZSpeed" placeholder="Enter speed for Z">
           <button class="small-button" onclick="setSpeed('Z')">Set Z Speed</button>
         </div>
-        <h2>Supported Commands</h2>
+        <div id="response" style="margin-top: 20px; color: blue;"></div>
+      </body>
+      </html>
+    )rawliteral";
+    request->send(200, "text/html", html);
+  });
+
+  // Add a new endpoint for the help page
+  server.on("/help", HTTP_GET, [](AsyncWebServerRequest *request) {
+    String helpHtml = R"rawliteral(
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Help - Supported Commands</title>
+        <style>
+          body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
+          ul { text-align: left; display: inline-block; }
+          a { text-decoration: none; color: blue; font-weight: bold; }
+        </style>
+      </head>
+      <body>
+        <h1>Supported Commands</h1>
         <ul>
           <li><strong>S:</strong> Servo control (e.g., S90 for 90 degrees)</li>
           <li><strong>D:</strong> Delay in milliseconds (e.g., D500 for 500ms delay)</li>
@@ -472,11 +509,11 @@ void setupWebServer() {
           <li><strong>C:</strong> Set globalDelayMs (e.g., C100 to set delay to 100 ms)</li>
           <li><strong>LOAD WIRE:</strong> Moves X-axis by the predefined globalXValue.</li>
         </ul>
-        <div id="response" style="margin-top: 20px; color: blue;"></div>
+        <a href="/">Back to Home</a>
       </body>
       </html>
     )rawliteral";
-    request->send(200, "text/html", html);
+    request->send(200, "text/html", helpHtml);
   });
 
   // Handle command buffer input
