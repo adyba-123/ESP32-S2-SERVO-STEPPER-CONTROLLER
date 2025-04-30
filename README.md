@@ -9,12 +9,7 @@ http://192.168.4.1/
 https://www.adafruit.com/product/5325
 
 ## Setup
-- Make `S0` straight at 6 o'clock.
-- Example commands:
-  ```
-  Z-1800
-  S320, Z1800
-  ```
+- The Servo will start at 170 degrees and not at 0 as well as includes limits that avoid hard crash to the bending table.
 
 ## ZTIE RUN CODE Example
 ```
